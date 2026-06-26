@@ -1,6 +1,6 @@
 **Nginx + Let’s Encrypt 一键部署脚本使用指南**
 
-以下是针对 `/opt/scripts/nginx-acme.sh` 脚本的完整使用说明，适合团队成员或后续维护人员参考。
+以下是针对 `nginx-acme.sh` 脚本的完整使用说明，适合团队成员或后续维护人员参考。
 
 ------
 
@@ -8,7 +8,7 @@
 
 | 项目     | 内容                                                         |
 | :------- | :----------------------------------------------------------- |
-| 脚本路径 | `/opt/scripts/nginx-acme.sh`                                 |
+| 脚本路径 | `nginx-acme.sh`                                 |
 | 支持系统 | Oracle Linux 8/9、CentOS 8/9、Rocky Linux、AlmaLinux、Debian 10+、Ubuntu 20.04+ |
 | 功能     | 自动申请 Let’s Encrypt 证书 + 配置 Nginx HTTPS 反向代理/静态站点 + 设置自动续期 |
 
