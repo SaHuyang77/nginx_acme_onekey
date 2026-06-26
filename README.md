@@ -61,7 +61,7 @@ bash /opt/scripts/nginx-acme.sh web.myapp.com static admin@myapp.com
 
 ------
 
-### 4. 新增反向代理（推荐流程）
+### 4. 反向代理（推荐流程）
 
 当需要为一个新域名配置 HTTPS 反代时，按以下步骤操作：
 
@@ -179,9 +179,7 @@ rm -f /usr/local/bin/ssl-update-<域名>.sh
 nginx -t && systemctl reload nginx
 ```
 
-#### 一键删除脚本示例（谨慎使用）
-
-你可以创建一个辅助删除脚本：
+#### 一键删除脚本
 
 ```bash
 cat > /usr/local/bin/remove-domain.sh << 'EOF'
