@@ -100,8 +100,10 @@ bash /opt/scripts/nginx-acme.sh web.myapp.com cf_proxy 127.0.0.1:8080 /root/.sec
 1. **域名 DNS 托管到 Cloudflare**，且在 Cloudflare Dashboard 开启代理（DNS 记录状态为橙色云图标）
 2. **创建 Cloudflare API Token**：
    - Dashboard → 右上角头像 → My Profile → API Tokens → Create Token
+   - 选择模板：Edit zone DNS（或自定义）
    - 权限选择 **Zone - DNS - Edit**，作用域选你的域名
-3. **本地创建凭证文件**（示例路径 `/root/.secrets/cf.ini`）：
+   - 复制 Token（只会显示一次）
+3. **本地创建凭证文件**（示例路径 `/root/.secrets/cf.ini`。部署成功后，确认续期正常即可删除此文件）：
 
    ```ini
    sudo mkdir -p /root/.secrets
