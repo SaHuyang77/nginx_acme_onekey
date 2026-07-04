@@ -104,11 +104,11 @@ bash /opt/scripts/nginx-acme.sh web.myapp.com cf_proxy 127.0.0.1:8080 /root/.sec
 3. **本地创建凭证文件**（示例路径 `/root/.secrets/cf.ini`）：
 
    ```ini
-   dns_cloudflare_api_token = 你的_API_Token
-   ```
-
-   ```bash
-   chmod 600 /root/.secrets/cf.ini
+   sudo mkdir -p /root/.secrets
+   sudo tee /root/.secrets/cf.ini << 'EOF'
+   dns_cloudflare_api_token = 你复制的Token
+   EOF
+   sudo chmod 600 /root/.secrets/cf.ini
    ```
 
 #### 部署步骤
