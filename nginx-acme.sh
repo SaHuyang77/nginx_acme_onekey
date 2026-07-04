@@ -107,33 +107,31 @@ parse_args() {
         echo -e "${Info} 邮箱: ${Green}${email}${Font}"
     elif [[ "$mode" == "cf_proxy" ]]; then
         deploy_mode="cf_proxy"
-        cf_arg4="${4:-}"
-        cf_arg5="${5:-}"
-        if [[ -n "$cf_arg4" && -n "$cf_arg5" ]]; then
-            proxy_target="$cf_arg4"
-            cf_credentials="$cf_arg5"
-        elif [[ -n "$cf_arg4" ]]; then
-            cf_credentials="$cf_arg4"
-            proxy_target=""
+        # cf_proxy 固定参数顺序：第3=proxy_target，第4=cf_ini，第5=email（可选）
+        # 修正：第 3 个参数不是邮箱，必须还原为默认值
+        if [[ -n "${5:-}" ]]; then
+            email="$5"
         else
-            echo -e "${Error} cf_proxy 模式需要反向代理目标 + Cloudflare 凭证文件" && exit 1
+            email="${DEFAULT_EMAIL_PREFIX}${domain}"
         fi
 
-        if [[ -z "$proxy_target" ]]; then
-            echo -e "${Info} 域名: ${Green}${domain}${Font}"
-            echo -e "${Info} 模式: ${Green}Cloudflare 已代理（DNS-01）${Font}"
-            echo -e "${Info} 邮箱: ${Green}${email}${Font}"
-            echo -e "${Info} Cloudflare 凭证: ${Green}${cf_credentials}${Font}"
-        else
-            if [[ ! "$proxy_target" =~ ^[a-zA-Z0-9.-]+:[0-9]+$ ]]; then
-                echo -e "${Error} cf_proxy 反向代理目标格式不正确（IP:端口）: ${proxy_target}" && exit 1
-            fi
-            echo -e "${Info} 域名: ${Green}${domain}${Font}"
-            echo -e "${Info} 模式: ${Green}Cloudflare 已代理反代${Font}"
-            echo -e "${Info} 反向代理目标: ${Green}http://${proxy_target}${Font}"
-            echo -e "${Info} 邮箱: ${Green}${email}${Font}"
-            echo -e "${Info} Cloudflare 凭证: ${Green}${cf_credentials}${Font}"
+        if [[ -z "${3:-}" ]]; then
+            echo -e "${Error} cf_proxy 模式缺少反向代理目标（第 3 个参数）" && exit 1
         fi
+        if [[ -z "${4:-}" ]]; then
+            echo -e "${Error} cf_proxy 模式缺少 Cloudflare 凭证文件（第 4 个参数）" && exit 1
+        fi
+        proxy_target="$3"
+        cf_credentials="$4"
+
+        if [[ ! "$proxy_target" =~ ^[a-zA-Z0-9.-]+:[0-9]+$ ]]; then
+            echo -e "${Error} cf_proxy 反向代理目标格式不正确（应为 IP:端口）: ${proxy_target}" && exit 1
+        fi
+        echo -e "${Info} 域名: ${Green}${domain}${Font}"
+        echo -e "${Info} 模式: ${Green}Cloudflare 已代理反代${Font}"
+        echo -e "${Info} 反向代理目标: ${Green}http://${proxy_target}${Font}"
+        echo -e "${Info} 邮箱: ${Green}${email}${Font}"
+        echo -e "${Info} Cloudflare 凭证: ${Green}${cf_credentials}${Font}"
         check_cf_credentials "$cf_credentials"
     else
         deploy_mode="proxy"
@@ -183,14 +181,25 @@ CF_REAL_IP_CIDRS=(
 
 # 设置 Cloudflare DNS API 凭证（用于 DNS-01）
 setup_cf_dns_api() {
-    echo -e "${Info} 注册 Cloudflare DNS API 凭证（${cf_credentials}）..."
+    echo -e "${Info} 读取 Cloudflare DNS API 凭证（${cf_credentials}）..."
     "$HOME/.acme.sh/acme.sh" \
         --set-default-ca --server letsencrypt
-    "$HOME/.acme.sh/acme.sh" \
-        --issue --dns dns_cf \
-        --dns-cf-credentials "$cf_credentials" \
-        -d "${domain}" -k ec-256 --force --dry-run 2>/dev/null || true
-    echo -e "${OK} Cloudflare DNS API 凭证已配置"
+
+    # 支持 certbot 格式（dns_cloudflare_api_token）和 acme.sh 格式（CF_Token）
+    local cf_token=""
+    if [[ -f "$cf_credentials" ]]; then
+        cf_token=$(grep -E '^\s*CF_Token\s*=' "$cf_credentials" 2>/dev/null | head -n1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if [[ -z "$cf_token" ]]; then
+            cf_token=$(grep -E '^\s*dns_cloudflare_api_token\s*=' "$cf_credentials" 2>/dev/null | head -n1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        fi
+    fi
+
+    if [[ -z "$cf_token" ]]; then
+        echo -e "${Error} 无法从凭证文件中提取 Cloudflare API Token" && exit 1
+    fi
+
+    export CF_Token="$cf_token"
+    echo -e "${OK} Cloudflare DNS API 凭证已配置（Token: ${cf_token:0:8}...）"
 }
 
 # 申请证书
@@ -203,7 +212,6 @@ apply_ssl() {
         setup_cf_dns_api
         "$HOME/.acme.sh/acme.sh" --issue \
             --dns dns_cf \
-            --dns-cf-credentials "$cf_credentials" \
             -d "${domain}" -k ec-256 --force
     else
         # 原有 HTTP-01 standalone 路径（proxy / static）
