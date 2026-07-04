@@ -96,7 +96,7 @@ parse_args() {
     cf_credentials=""
 
     # 简单校验域名
-    if [[ ! "$domain" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$ ]]; then
+    if [[ ! "$domain" =~ ^[a-zA-Z0-9.-]+[.][a-zA-Z]{2,}$ ]]; then
         echo -e "${Error} 域名格式不正确: $domain" && exit 1
     fi
 
