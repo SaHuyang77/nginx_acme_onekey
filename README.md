@@ -41,7 +41,7 @@ bash /opt/scripts/nginx-acme.sh <域名> cf_proxy <反向代理目标> <Cloudfla
 #### 常用执行示例
 
 ```bash
-# 反带模式
+# 反代模式
 bash /opt/scripts/nginx-acme.sh web.myapp.com 127.0.0.1:8888
 bash /opt/scripts/nginx-acme.sh web.myapp.com static
 
@@ -91,7 +91,7 @@ bash /opt/scripts/nginx-acme.sh web.myapp.com cf_proxy 127.0.0.1:8080 /root/.sec
 
 ------
 
-### 4.5. Cloudflare 已代理模式（cf_proxy）
+### 5. Cloudflare 已代理模式（cf_proxy）
 
 当域名使用 **Cloudflare 已代理**（橙色云）时，HTTP 流量经过 Cloudflare 网络，源站 80 端口无需对外暴露。此模式使用 **DNS-01 验证**申请证书，并自动还原客户端真实 IP。
 
@@ -154,7 +154,7 @@ real_ip_header CF-Connecting-IP;
 
 ------
 
-### 5. 手动续期证书
+### 6. 手动续期证书
 
 当需要立即续期某个域名的证书时，执行对应的手动续期脚本：
 
@@ -176,7 +176,7 @@ bash /usr/local/bin/ssl-update-web.myapp.com.sh
 
 ------
 
-### 6. 查看与排查
+### 7. 查看与排查
 
 #### 查看已部署的域名配置
 
@@ -210,7 +210,7 @@ tail -f /var/log/acme-cron.log
 
 ------
 
-### 7. 常见问题处理
+### 8. 常见问题处理
 
 | 问题现象        | 可能原因                 | 解决方法                                        |
 | :-------------- | :----------------------- | :---------------------------------------------- |
@@ -221,7 +221,7 @@ tail -f /var/log/acme-cron.log
 
 ------
 
-### 8. 删除某个域名配置
+### 9. 删除某个域名配置
 
 当某个域名不再需要时，建议按以下步骤**干净删除**，避免残留配置导致问题。
 
@@ -272,7 +272,7 @@ bash /usr/local/bin/remove-domain.sh web.myapp.com
 
 > **注意**：删除操作不可逆，建议先备份相关文件。
 
-### 9. 日常维护建议
+### 10. 日常维护建议
 
 - **自动续期**：脚本已通过 `acme.sh` 设置 cron 任务，通常无需手动干预。
 - **新增域名**：直接使用脚本命令即可完成全流程。
