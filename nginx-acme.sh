@@ -243,7 +243,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name ${domain};
-    return 301 https://\\$server_name\\$request_uri;
+    return 301 https://\$server_name\$request_uri;
 }
 
 server {
@@ -267,13 +267,13 @@ server {
 
     location / {
         proxy_pass http://${proxy_target};
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
 
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \\$http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
     }
 }
@@ -302,7 +302,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name ${domain};
-    return 301 https://\\$server_name\\$request_uri;
+    return 301 https://\$server_name\$request_uri;
 }
 
 server {
@@ -334,15 +334,15 @@ EOF
 
     # WebSocket/升级支持
     proxy_http_version 1.1;
-    proxy_set_header Upgrade \\$http_upgrade;
+    proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
 
     location / {
         proxy_pass http://${proxy_target};
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\$http_x_forwarded_proto;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto;
     }
 }
 EOF
@@ -394,7 +394,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name ${domain};
-    return 301 https://\\$server_name\\$request_uri;
+    return 301 https://\$server_name\$request_uri;
 }
 
 server {
@@ -420,7 +420,7 @@ server {
     index index.html;
 
     location / {
-        try_files \\$uri \\$uri/ =404;
+        try_files \$uri \$uri/ =404;
     }
 }
 EOF
@@ -441,10 +441,10 @@ setup_renew() {
 
     cat > /usr/local/bin/ssl-update-${domain}.sh << EOF
 #!/bin/bash
-export PATH="\\$HOME/.acme.sh:\\$PATH"
+export PATH="\$HOME/.acme.sh:\$PATH"
 /root/.acme.sh/acme.sh --cron --home "/root/.acme.sh" > /var/log/acme-cron.log 2>&1
-/root/.acme.sh/acme.sh --installcert -d ${domain} \\\\
-    --fullchainpath ${DEFAULT_SSL_DIR}/${domain}.crt \\\\
+/root/.acme.sh/acme.sh --installcert -d ${domain} \$
+    --fullchainpath ${DEFAULT_SSL_DIR}/${domain}.crt \$
     --keypath ${DEFAULT_SSL_DIR}/${domain}.key --ecc --force
 systemctl reload nginx
 EOF
