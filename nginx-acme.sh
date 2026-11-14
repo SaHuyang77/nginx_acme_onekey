@@ -4,7 +4,10 @@
 #   Nginx + ACME SSL 一键部署脚本（通用版）
 #   支持 Oracle Linux / CentOS / Debian / Ubuntu
 #   支持自定义反向代理目标 + 静态站点 + Cloudflare 已代理
+#   HTTP-01 使用 webroot，申请/续期均不停 Nginx
 # =============================================
+
+VERSION="2.1.0"
 
 Green="\033[32m"
 Red="\033[31m"
@@ -20,6 +23,8 @@ Error="${Red}[错误]${Font}"
 DEFAULT_SSL_DIR="/etc/nginx/ssl"
 DEFAULT_NGINX_SSL_DIR="/etc/nginx/ssl"
 DEFAULT_EMAIL_PREFIX="admin@"
+ACME_HOME="${HOME}/.acme.sh"
+ACME_BIN="${ACME_HOME}/acme.sh"
 
 # 检测root
 is_root() {
@@ -54,11 +59,12 @@ judge() {
 # 显示使用帮助
 show_usage() {
     echo -e "${GreenBG}==================== 使用说明 ====================${Font}"
+    echo -e "nginx-acme.sh ${VERSION}"
     echo -e "用法: $0 <域名> <模式> [邮箱]"
     echo -e ""
     echo -e "模式说明:"
-    echo -e "  <反代目标>       反代模式：格式 IP:端口 或 localhost:端口"
-    echo -e "  static           静态站点模式"
+    echo -e "  <反代目标>       反代模式：格式 IP:端口 或 localhost:端口（HTTP-01 webroot，不停 Nginx）"
+    echo -e "  static           静态站点模式（HTTP-01 webroot，不停 Nginx）"
     echo -e "  cf_proxy         Cloudflare 已代理反代（DNS-01 + 真实IP还原）"
     echo -e ""
     echo -e "示例:"
@@ -73,19 +79,29 @@ show_usage() {
 check_cf_credentials() {
     local cf_ini="$1"
     if [[ -z "$cf_ini" ]]; then
-        echo -e "${Error} cf_proxy 模式需要 Cloudflare 凭证文件路径（第 4/5 个参数）" && exit 1
+        echo -e "${Error} cf_proxy 模式需要 Cloudflare 凭证文件路径（第 4 个参数）" && exit 1
     fi
     if [[ ! -f "$cf_ini" ]]; then
         echo -e "${Error} Cloudflare 凭证文件不存在: ${cf_ini}" && exit 1
     fi
-    if ! grep -qE '^dns_cloudflare_api_token\s*=' "$cf_ini" 2>/dev/null; then
-        echo -e "${Error} 凭证文件缺少 dns_cloudflare_api_token 字段" && exit 1
+    if ! grep -qE '^\s*(dns_cloudflare_api_token|CF_Token)\s*=' "$cf_ini" 2>/dev/null; then
+        echo -e "${Error} 凭证文件缺少 dns_cloudflare_api_token 或 CF_Token 字段" && exit 1
     fi
     chmod 600 "$cf_ini" || true
 }
 
 # 参数解析
 parse_args() {
+    if [[ $# -lt 1 ]]; then
+        show_usage
+    fi
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        show_usage
+    fi
+    if [[ "$1" == "-V" || "$1" == "--version" ]]; then
+        echo "nginx-acme.sh ${VERSION}"
+        exit 0
+    fi
     if [[ $# -lt 2 ]]; then
         show_usage
     fi
@@ -94,6 +110,7 @@ parse_args() {
     mode="$2"
     email="${3:-${DEFAULT_EMAIL_PREFIX}${domain}}"
     cf_credentials=""
+    ACME_WEBROOT="/var/www/${domain}"
 
     # 简单校验域名
     if [[ ! "$domain" =~ ^[a-zA-Z0-9.-]+[.][a-zA-Z]{2,}$ ]]; then
@@ -105,6 +122,7 @@ parse_args() {
         echo -e "${Info} 域名: ${Green}${domain}${Font}"
         echo -e "${Info} 模式: ${Green}静态站点${Font}"
         echo -e "${Info} 邮箱: ${Green}${email}${Font}"
+        echo -e "${Info} 验证: ${Green}HTTP-01 webroot（不停 Nginx）${Font}"
     elif [[ "$mode" == "cf_proxy" ]]; then
         deploy_mode="cf_proxy"
         # cf_proxy 固定参数顺序：第3=proxy_target，第4=cf_ini，第5=email（可选）
@@ -132,6 +150,7 @@ parse_args() {
         echo -e "${Info} 反向代理目标: ${Green}http://${proxy_target}${Font}"
         echo -e "${Info} 邮箱: ${Green}${email}${Font}"
         echo -e "${Info} Cloudflare 凭证: ${Green}${cf_credentials}${Font}"
+        echo -e "${Info} 验证: ${Green}DNS-01 dns_cf（不停 Nginx）${Font}"
         check_cf_credentials "$cf_credentials"
     else
         deploy_mode="proxy"
@@ -142,6 +161,7 @@ parse_args() {
         echo -e "${Info} 域名: ${Green}${domain}${Font}"
         echo -e "${Info} 反向代理目标: ${Green}http://${proxy_target}${Font}"
         echo -e "${Info} 邮箱: ${Green}${email}${Font}"
+        echo -e "${Info} 验证: ${Green}HTTP-01 webroot（不停 Nginx）${Font}"
     fi
 }
 
@@ -162,11 +182,14 @@ install_dependency() {
 
 # 安装 acme.sh
 install_acme() {
+    if [[ -x "${ACME_BIN}" ]]; then
+        echo -e "${Info} 检测到已安装 acme.sh，跳过安装"
+        return 0
+    fi
     echo -e "${Info} 安装 acme.sh..."
     curl -s https://get.acme.sh | sh -s email="${email}"
     judge "acme.sh 安装"
-    export PATH="$HOME/.acme.sh:$PATH"
-    source "$HOME/.bashrc" 2>/dev/null || true
+    ACME_BIN="${HOME}/.acme.sh/acme.sh"
 }
 
 # Cloudflare 已代理：真实 IP 还原地址段（官方 v2，含 IPv6）
@@ -182,15 +205,14 @@ CF_REAL_IP_CIDRS=(
 # 设置 Cloudflare DNS API 凭证（用于 DNS-01）
 setup_cf_dns_api() {
     echo -e "${Info} 读取 Cloudflare DNS API 凭证（${cf_credentials}）..."
-    "$HOME/.acme.sh/acme.sh" \
-        --set-default-ca --server letsencrypt
+    "${ACME_BIN}" --set-default-ca --server letsencrypt
 
     # 支持 certbot 格式（dns_cloudflare_api_token）和 acme.sh 格式（CF_Token）
     local cf_token=""
     if [[ -f "$cf_credentials" ]]; then
-        cf_token=$(grep -E '^\s*CF_Token\s*=' "$cf_credentials" 2>/dev/null | head -n1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        cf_token=$(grep -E '^\s*CF_Token\s*=' "$cf_credentials" 2>/dev/null | head -n1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^["'\'']//;s/["'\'']$//')
         if [[ -z "$cf_token" ]]; then
-            cf_token=$(grep -E '^\s*dns_cloudflare_api_token\s*=' "$cf_credentials" 2>/dev/null | head -n1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            cf_token=$(grep -E '^\s*dns_cloudflare_api_token\s*=' "$cf_credentials" 2>/dev/null | head -n1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^["'\'']//;s/["'\'']$//')
         fi
     fi
 
@@ -199,33 +221,114 @@ setup_cf_dns_api() {
     fi
 
     export CF_Token="$cf_token"
-    echo -e "${OK} Cloudflare DNS API 凭证已配置（Token: ${cf_token:0:8}...）"
+    echo -e "${OK} Cloudflare DNS API 凭证已配置"
+}
+
+# HTTP-01 webroot：准备挑战目录（SELinux 友好）
+prepare_webroot() {
+    mkdir -p "${ACME_WEBROOT}/.well-known/acme-challenge"
+    chmod -R a+rX "${ACME_WEBROOT}"
+    if command -v restorecon >/dev/null 2>&1; then
+        restorecon -Rv "${ACME_WEBROOT}" >/dev/null 2>&1 || true
+    fi
+}
+
+# 80 端口 ACME 挑战 location（必须写在 return 301 之前）
+http_acme_server_block() {
+    cat << EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root ${ACME_WEBROOT};
+        default_type text/plain;
+        allow all;
+    }
+
+    location / {
+        return 301 https://\$server_name\$request_uri;
+    }
+}
+EOF
+}
+
+# 申请证书前写入仅 HTTP 的挑战 vhost，Nginx 保持运行
+write_http_challenge_vhost() {
+    echo -e "${Info} 写入 HTTP-01 webroot 挑战配置（不停 Nginx）..."
+    http_acme_server_block > "/etc/nginx/conf.d/${domain}.conf"
+    systemctl enable nginx --now >/dev/null 2>&1 || true
+    nginx -t
+    judge "Nginx HTTP 挑战配置语法检查"
+    systemctl reload nginx || systemctl restart nginx
+    judge "Nginx 重载（HTTP 挑战）"
+}
+
+# 将旧版 standalone 续期方式切换为 webroot，避免 cron 再抢 80 端口
+migrate_standalone_to_webroot() {
+    local conf="${HOME}/.acme.sh/${domain}_ecc/${domain}.conf"
+    [[ -f "$conf" ]] || return 0
+    if grep -q "standalone" "$conf"; then
+        echo -e "${Info} 检测到旧版 standalone 验证，已切换为 webroot"
+        sed -i "s#Le_Webroot=.*#Le_Webroot='${ACME_WEBROOT}'#g" "$conf"
+        # 清掉可能存在的停 Nginx 钩子，避免续期再 stop
+        sed -i "s#Le_PreHook=.*#Le_PreHook=''#g" "$conf"
+        sed -i "s#Le_PostHook=.*#Le_PostHook=''#g" "$conf"
+    fi
+}
+
+cert_already_issued() {
+    [[ -f "${HOME}/.acme.sh/${domain}_ecc/fullchain.cer" ]]
+}
+
+install_cert_to_nginx() {
+    mkdir -p "${DEFAULT_SSL_DIR}"
+    "${ACME_BIN}" --install-cert -d "${domain}" --ecc \
+        --fullchain-file "${DEFAULT_SSL_DIR}/${domain}.crt" \
+        --key-file "${DEFAULT_SSL_DIR}/${domain}.key" \
+        --reloadcmd "systemctl reload nginx"
+    local rc=$?
+    chmod 600 "${DEFAULT_SSL_DIR}/${domain}.key" 2>/dev/null || true
+    chmod 644 "${DEFAULT_SSL_DIR}/${domain}.crt" 2>/dev/null || true
+    return $rc
 }
 
 # 申请证书
 apply_ssl() {
     echo -e "${Info} 正在申请 Let's Encrypt 证书（${domain}）..."
+    local issue_rc=0
 
     if [[ "$deploy_mode" == "cf_proxy" ]]; then
-        # Cloudflare 已代理：使用 DNS-01，无需关闭 nginx，无需 80 端口可达
         echo -e "${Info} 使用 Cloudflare DNS-01 验证申请证书..."
         setup_cf_dns_api
-        "$HOME/.acme.sh/acme.sh" --issue \
-            --dns dns_cf \
-            -d "${domain}" -k ec-256 --force
+        if cert_already_issued; then
+            echo -e "${Info} 证书已存在，跳过重新签发（续期走 acme.sh cron）"
+            issue_rc=0
+        else
+            "${ACME_BIN}" --issue \
+                --dns dns_cf \
+                -d "${domain}" -k ec-256
+            issue_rc=$?
+        fi
     else
-        # 原有 HTTP-01 standalone 路径（proxy / static）
-        systemctl stop nginx >/dev/null 2>&1 || true
-        "$HOME/.acme.sh/acme.sh" --set-default-ca --server letsencrypt
-        "$HOME/.acme.sh/acme.sh" --issue --standalone -d "${domain}" -k ec-256 --force
+        prepare_webroot
+        write_http_challenge_vhost
+        migrate_standalone_to_webroot
+        "${ACME_BIN}" --set-default-ca --server letsencrypt
+        if cert_already_issued; then
+            echo -e "${Info} 证书已存在，跳过重新签发；续期将使用 webroot"
+            issue_rc=0
+        else
+            echo -e "${Info} 使用 HTTP-01 webroot 验证申请证书（Nginx 保持运行）..."
+            "${ACME_BIN}" --issue --webroot "${ACME_WEBROOT}" -d "${domain}" -k ec-256
+            issue_rc=$?
+        fi
     fi
 
-    if [ $? -eq 0 ]; then
-        echo -e "${OK} SSL 证书申请成功！"
-        mkdir -p "${DEFAULT_SSL_DIR}"
-        "$HOME/.acme.sh/acme.sh" --installcert -d "${domain}" \
-            --fullchainpath "${DEFAULT_SSL_DIR}/${domain}.crt" \
-            --keypath "${DEFAULT_SSL_DIR}/${domain}.key" --ecc --force
+    if [ $issue_rc -eq 0 ]; then
+        echo -e "${OK} SSL 证书申请/复用成功！"
+        install_cert_to_nginx
         judge "证书安装"
     else
         echo -e "${Error} 证书申请失败！" && exit 1
@@ -237,14 +340,11 @@ config_nginx_proxy() {
     echo -e "${Info} 配置 Nginx 反向代理到 ${proxy_target}..."
 
     mkdir -p "${DEFAULT_NGINX_SSL_DIR}"
+    prepare_webroot
 
-    cat > /etc/nginx/conf.d/${domain}.conf << EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${domain};
-    return 301 https://\$server_name\$request_uri;
-}
+    {
+        http_acme_server_block
+        cat << EOF
 
 server {
     listen 443 ssl http2;
@@ -278,9 +378,14 @@ server {
     }
 }
 EOF
+    } > "/etc/nginx/conf.d/${domain}.conf"
 
     nginx -t
     judge "Nginx 配置语法检查"
+
+    if command -v setsebool >/dev/null 2>&1; then
+        setsebool -P httpd_can_network_connect 1 >/dev/null 2>&1 || true
+    fi
 
     systemctl enable nginx --now
     systemctl reload nginx || systemctl restart nginx
@@ -297,13 +402,9 @@ config_nginx_cf_proxy() {
 
     mkdir -p "${DEFAULT_NGINX_SSL_DIR}"
 
-    cat > /etc/nginx/conf.d/${domain}.conf << EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${domain};
-    return 301 https://\$server_name\$request_uri;
-}
+    {
+        http_acme_server_block
+        cat << EOF
 
 server {
     listen 443 ssl http2;
@@ -326,16 +427,11 @@ server {
 
     # Cloudflare 真实 IP 还原
 EOF
-    for cidr in "${CF_REAL_IP_CIDRS[@]}"; do
-        echo "    set_real_ip_from ${cidr};" >> /etc/nginx/conf.d/${domain}.conf
-    done
-    cat >> /etc/nginx/conf.d/${domain}.conf << EOF
+        for cidr in "${CF_REAL_IP_CIDRS[@]}"; do
+            echo "    set_real_ip_from ${cidr};"
+        done
+        cat << EOF
     real_ip_header CF-Connecting-IP;
-
-    # WebSocket/升级支持
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection "upgrade";
 
     location / {
         proxy_pass http://${proxy_target};
@@ -343,12 +439,20 @@ EOF
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
     }
 }
 EOF
+    } > "/etc/nginx/conf.d/${domain}.conf"
 
     nginx -t
     judge "Nginx 配置语法检查（cf_proxy）"
+
+    if command -v setsebool >/dev/null 2>&1; then
+        setsebool -P httpd_can_network_connect 1 >/dev/null 2>&1 || true
+    fi
 
     systemctl enable nginx --now
     systemctl reload nginx || systemctl restart nginx
@@ -360,12 +464,10 @@ config_nginx_static() {
     echo -e "${Info} 配置 Nginx 静态站点..."
 
     mkdir -p "${DEFAULT_NGINX_SSL_DIR}"
+    prepare_webroot
 
-    # 创建网站目录
-    mkdir -p "/var/www/${domain}"
-
-    # 创建默认 index.html
-    cat > "/var/www/${domain}/index.html" << HTMLEOF
+    if [[ ! -f "${ACME_WEBROOT}/index.html" ]]; then
+        cat > "${ACME_WEBROOT}/index.html" << HTMLEOF
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -386,16 +488,19 @@ config_nginx_static() {
 </body>
 </html>
 HTMLEOF
+    fi
 
-    chown -R opc:opc "/var/www/${domain}"
+    if id opc >/dev/null 2>&1; then
+        chown -R opc:opc "${ACME_WEBROOT}"
+    elif id www-data >/dev/null 2>&1; then
+        chown -R www-data:www-data "${ACME_WEBROOT}"
+    elif id nginx >/dev/null 2>&1; then
+        chown -R nginx:nginx "${ACME_WEBROOT}"
+    fi
 
-    cat > /etc/nginx/conf.d/${domain}.conf << EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${domain};
-    return 301 https://\$server_name\$request_uri;
-}
+    {
+        http_acme_server_block
+        cat << EOF
 
 server {
     listen 443 ssl http2;
@@ -416,7 +521,7 @@ server {
     add_header X-Content-Type-Options nosniff;
     add_header X-XSS-Protection "1; mode=block";
 
-    root /var/www/${domain};
+    root ${ACME_WEBROOT};
     index index.html;
 
     location / {
@@ -424,6 +529,7 @@ server {
     }
 }
 EOF
+    } > "/etc/nginx/conf.d/${domain}.conf"
 
     nginx -t
     judge "Nginx 配置语法检查"
@@ -433,28 +539,33 @@ EOF
     judge "Nginx 启动/重载"
 }
 
-# 设置自动续期
+# 设置自动续期（webroot/dns，cron 不停 Nginx）
 setup_renew() {
     echo -e "${Info} 设置证书自动续期..."
-    "$HOME/.acme.sh/acme.sh" --install-cronjob
-    "$HOME/.acme.sh/acme.sh" --upgrade --auto-upgrade
+    "${ACME_BIN}" --install-cronjob
+    "${ACME_BIN}" --upgrade --auto-upgrade
 
-    cat > /usr/local/bin/ssl-update-${domain}.sh << EOF
+    cat > "/usr/local/bin/ssl-update-${domain}.sh" << EOF
 #!/bin/bash
-export PATH="\$HOME/.acme.sh:\$PATH"
-/root/.acme.sh/acme.sh --cron --home "/root/.acme.sh" > /var/log/acme-cron.log 2>&1
-/root/.acme.sh/acme.sh --installcert -d ${domain} \$
-    --fullchainpath ${DEFAULT_SSL_DIR}/${domain}.crt \$
-    --keypath ${DEFAULT_SSL_DIR}/${domain}.key --ecc --force
-systemctl reload nginx
+set -euo pipefail
+export PATH="/root/.acme.sh:\$PATH"
+/root/.acme.sh/acme.sh --cron --home "/root/.acme.sh" >> /var/log/acme-cron.log 2>&1
+/root/.acme.sh/acme.sh --install-cert -d ${domain} --ecc \\
+    --fullchain-file ${DEFAULT_SSL_DIR}/${domain}.crt \\
+    --key-file ${DEFAULT_SSL_DIR}/${domain}.key \\
+    --reloadcmd "systemctl reload nginx"
 EOF
-    chmod +x /usr/local/bin/ssl-update-${domain}.sh
+    chmod +x "/usr/local/bin/ssl-update-${domain}.sh"
 
     judge "自动续期设置"
 }
 
 main() {
-    echo -e "${GreenBG}========== Nginx + ACME SSL 一键部署（通用版） ==========${Font}"
+    case "${1:-}" in
+        -h|--help) show_usage ;;
+        -V|--version) echo "nginx-acme.sh ${VERSION}"; exit 0 ;;
+    esac
+    echo -e "${GreenBG}========== Nginx + ACME SSL 一键部署 v${VERSION} ==========${Font}"
     is_root
     check_system
     parse_args "$@"
@@ -476,19 +587,16 @@ main() {
     echo -e "${OK} 域名: ${Green}https://${domain}${Font}"
     if [[ "$deploy_mode" == "static" ]]; then
         echo -e "${OK} 模式: ${Green}静态站点${Font}"
-        echo -e "网站目录: ${Green}/var/www/${domain}${Font}"
+        echo -e "网站目录: ${Green}${ACME_WEBROOT}${Font}"
     elif [[ "$deploy_mode" == "cf_proxy" ]]; then
-        if [[ -n "$proxy_target" ]]; then
-            echo -e "${OK} 模式: ${Green}Cloudflare 已代理反代${Font}"
-            echo -e "反向代理目标: ${Green}http://${proxy_target}${Font}"
-        else
-            echo -e "${OK} 模式: ${Green}Cloudflare 已代理 DNS-01${Font}"
-        fi
+        echo -e "${OK} 模式: ${Green}Cloudflare 已代理反代${Font}"
+        echo -e "反向代理目标: ${Green}http://${proxy_target}${Font}"
         echo -e "Cloudflare 凭证: ${Green}${cf_credentials}${Font}"
     else
         echo -e "${OK} 模式: ${Green}反向代理${Font}"
         echo -e "反向代理目标: ${Green}http://${proxy_target}${Font}"
     fi
+    echo -e "证书验证: ${Green}申请/续期均不停 Nginx${Font}"
     echo -e "证书目录: ${Green}${DEFAULT_SSL_DIR}${Font}"
     echo -e "Nginx 配置: ${Green}/etc/nginx/conf.d/${domain}.conf${Font}"
     echo -e "手动续期脚本: ${Green}/usr/local/bin/ssl-update-${domain}.sh${Font}"
