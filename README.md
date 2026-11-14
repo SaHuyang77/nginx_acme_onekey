@@ -93,39 +93,135 @@ bash /opt/scripts/nginx-acme.sh web.myapp.com cf_proxy 127.0.0.1:8080 /root/.sec
 
 当域名使用 **Cloudflare 已代理**（橙色云）时，HTTP 流量经过 Cloudflare 网络，源站 80 端口无需对外暴露。此模式使用 **DNS-01 验证**申请证书，并自动还原客户端真实 IP。
 
-#### 前置条件
+<details>
+<summary><code><strong>飞行模式说明</strong></summary>
 
-1. **域名 DNS 托管到 Cloudflare**，且在 Cloudflare Dashboard 开启代理（DNS 记录状态为橙色云图标）
-2. **创建 Cloudflare API Token**：
-   - Dashboard → 右上角头像 → My Profile → API Tokens → Create Token
-   - 选择模板：Edit zone DNS（或自定义）
-   - 权限选择 **Zone - DNS - Edit**，作用域选你的域名
-   - 复制 Token（只会显示一次）
-3. **本地创建凭证文件**（示例路径 `/root/.secrets/cf.ini`。部署成功后，确认续期正常即可删除此文件）：
+此模式用于 Cloudflare 开启橙云代理的域名。你仍然可以通过原本的 80 端口访问本机（如果 80 端口开放），但证书申请会使用 Cloudflare 的 DNS API 完成 challenge，而不是传统的 HTTP-01。其优势是：源站无需暴露 80 端口给 Let's Encrypt，更适合有防火墙或仅暴露 443 端口的场景。
+
+</details>
+
+#### 5.1 获取 Cloudflare API Token
+
+1. 登录 Cloudflare 控制台：https://dash.cloudflare.com
+2. 点击右上角头像 → **My Profile** → **API Tokens**。
+3. 点击 **Create Token**，选择模板 **Edit zone DNS**。
+4. 确认权限：
+   - **Zone → DNS → Edit**
+   - 作用域：**Specific** → 选择你的域名（或全部）。
+5. 点击 **Continue to summary**，再 **Create Token**。
+6. 复制生成的 Token（只显示一次，务必保存）。例如：
 
    ```bash
-   sudo mkdir -p /root/.secrets
-   sudo tee /root/.secrets/cf.ini << 'EOF'
-   dns_cloudflare_api_token = 你复制的Token
-   EOF
-   sudo chmod 600 /root/.secrets/cf.ini
+   dns_cloudflare_api_token = 0AbCdE...
    ```
 
-   也支持 acme.sh 格式：`CF_Token=你复制的Token`
+> **安全提示**：Token 仅显示一次，不要将其发送到聊天、文档或代码仓库。可在本地创建一个只读文件。
 
-#### 部署步骤
+#### 5.2 凭证文件格式
+
+脚本期望从文件中读取 `dns_cloudflare_api_token`（优先）或 `CF_Token` 键。文件可使用 `ini` 格式，也支持注释（以 `#` 或 `;` 开头）。一个典型的 `cf.ini` 内容如下：
+
+```ini
+; Cloudflare API 令牌
+dns_cloudflare_api_token = 0AbCdE...   # 你的实际 token
+; 可选备用键：
+; CF_Token = 0AbCdE...
+```
+
+建议：
+
+- 权限 `600`（仅 owner 可读）：
+  ```bash
+  sudo chmod 600 /root/.secrets/cf.ini
+  ```
+- 使用 `sudo tee` 或 `cat` 写入，避免用纯文本复制粘贴到公共文档。
+
+#### 5.3 执行部署命令
 
 ```bash
 bash /opt/scripts/nginx-acme.sh yourdomain.com cf_proxy 127.0.0.1:3000 /root/.secrets/cf.ini
 ```
 
-- 第 1 个参数：Cloudflare 已代理的域名
-- 第 2 个参数：`cf_proxy`
-- 第 3 个参数：反向代理目标（如 `127.0.0.1:3000`）
-- 第 4 个参数：Cloudflare 凭证文件路径
-- 第 5 个参数（可选）：邮箱，默认 `admin@域名`
+参数含义：
 
-**参数顺序固定，不要对调。** 第 3 个参数是反代目标，不是邮箱。
+| 位置 | 含义 | 示例 |
+|------|------|------|
+| `<domain>` | 已在 Cloudflare 代理的域名 | `hermesweb.shipaiagent.ccwu.cc` |
+| `cf_proxy` | 固定字符串，表示 Cloudflare 已代理反代模式 | `cf_proxy` |
+| `<proxy_target>` | 后端反向代理服务地址 | `127.0.0.1:3000` |
+| `<cf.ini>` | Cloudflare 凭证文件 | `/root/.secrets/cf.ini` |
+| `[email]` | 可选，Let’s Encrypt 邮箱 | `admin@hermesweb.shipaiagent.ccwu.cc` |
+
+注意：
+
+- **第 3 个参数必须是反向代理目标，不是邮箱。** 若要指定邮箱，请把邮箱放到第 5 个位置（可选）。
+- 如果你第一次运行，脚本会先安装或升级 `acme.sh`，并设置默认 CA 到 Let's Encrypt。
+
+#### 5.4 脚本内部行为（DNS-01 验证）
+
+当进入 `cf_proxy` 分支后，执行流程如下：
+
+1. **解析并检查凭证文件**  
+   读取 `${cf_credentials}` 文件，提取 `dns_cloudflare_api_token` 或 `CF_Token`。如果两者都缺失，脚本会退出并提示。
+
+2. **安装/升级 acme.sh**  
+   `acme.sh` 会安装到 `~/.acme.sh`，并设置默认 CA（Let's Encrypt）。
+
+3. **准备 DNS-01 验证**  
+   - 设置环境变量 `CF_Token`（如果 `cf.ini` 中存在 `CF_Token`）。
+   - 执行：
+     ```bash
+     ~/.acme.sh/acme.sh --issue \
+         --dns dns_cf \
+         -d <domain> -k ec-256
+     ```
+   - `dns_cf` 是 acme.sh 的 Cloudflare DNS API 插件，它会根据 `CF_Token` 向 Cloudflare 创建一条 `_acme-challenge.<domain>` 的 TXT 记录。
+   - acme.sh 会自动轮询该记录，确认解析后完成 challenge。
+
+4. **签发证书**  
+   - 签发 ECC-256 (`-k ec-256`) 证书。
+   - 通过 `--install-cert` 将证书安装到：
+     - `/etc/nginx/ssl/<domain>.crt`
+     - `/etc/nginx/ssl/<domain>.key`
+
+5. **生成 Nginx 配置**  
+   - 80 端口监听 ACME challenge（`/.well-known/acme-challenge/`）。
+   - 443 端口监听 HTTPS，并设置：
+     - `ssl_certificate` 与 `ssl_certificate_key`。
+     - `real_ip_header CF-Connecting-IP`，以及若干 Cloudflare 来源 IP 段。
+     - WebSocket 路径：`/api/ws`, `/api/pty`, `/api/pub`。
+     - 反向代理到 `<proxy_target>`。
+
+6. **设置自动续期**  
+   - 安装 cron 任务。
+   - 生成 `/usr/local/bin/ssl-update-<domain>.sh` 脚本，命中时间后自动用 DNS-01 续期，并 `systemctl reload nginx`。
+
+#### 5.5 验证部署结果
+
+```bash
+# 检查证书时间（应与签发时间一致，过期时间通常 90 天）
+openssl x509 -in /etc/nginx/ssl/hermesweb.shipaiagent.ccwu.cc.crt -noout -dates
+
+# 检查 nginx 配置
+nginx -t
+
+# 测试网站是否通过 Cloudflare 代理
+curl -I https://hermesweb.shipaiagent.ccwu.cc
+
+# 查看 acme.sh cron 日志
+tail -f /var/log/acme-cron.log
+```
+
+#### 5.6 常见问题
+
+| 问题 | 原因 | 解决 |
+|---|---|---|
+| `Cloudflare 凭证文件不存在` | `cf.ini` 未创建或路径错误 | 检查路径并创建文件 |
+| `dns_cloudflare_api_token 未找到` | 文件格式错误或 Token 键名错 | 确认 `dns_cloudflare_api_token = <token>` 存在 |
+| `Cloudflare API 403` | Token 权限不足或过期 | 重新生成 Token，给 Zone - DNS - Edit 权限 |
+| `DNS-01 验证失败` | 域名未连接到 Cloudflare 或 DNS 未生效 | 确认域名在 Cloudflare 中，记录橙色云，刷新 DNS 缓存 |
+| `nginx 启动失败` | 证书路径错或 `nginx -t` 失败 | 检查 `/etc/nginx/conf.d/` 配置与证书路径 |
+| 续期时报 80 端口冲突 | 仍使用旧的 standalone 模式 | 重新运行脚本（新证书存在时会自动切换到 webroot/DNS-01）|
 
 #### 与普通反代模式的区别
 
@@ -136,7 +232,6 @@ bash /opt/scripts/nginx-acme.sh yourdomain.com cf_proxy 127.0.0.1:3000 /root/.se
 | 协议头传递     | `X-Forwarded-Proto $scheme` | `X-Forwarded-Proto $http_x_forwarded_proto` |
 
 ------
-
 ### 6. 证书续期（不停 Nginx）
 
 acme.sh 会安装 cron。到期前会用 **webroot 或 DNS-01** 续期，然后 `--reloadcmd "systemctl reload nginx"`。
