@@ -1,23 +1,5 @@
 **Nginx + Let's Encrypt 一键部署脚本使用指南**
 
-<style>
-  body { font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Segoe UI", sans-serif; line-height: 1.7; color: #24292f; }
-  h1, h2, h3, h4 { color: #1a1a1a; line-height: 1.4; margin-top: 1.2em; }
-  h2 { font-size: 1.4em; border-bottom: 2px solid #f0f0f0; padding-bottom: 4px; margin-top: 1.8em; }
-  h3 { font-size: 1.15em; margin-top: 1.4em; }
-  h4 { font-size: 1em; color: #444; }
-  p { margin: 0.7em 0; }
-  ul, ol { margin: 0.5em 0; padding-left: 1.8em; }
-  li { margin: 0.2em 0; }
-  table { border-collapse: collapse; width: 100%; margin: 0.8em 0; font-size: 0.95em; }
-  th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
-  th { background: #f6f8fa; }
-  pre, code { background: #f6f8fa; border-radius: 4px; padding: 0.2em 0.4em; font-family: "Consolas", "Menlo", monospace; }
-  pre { padding: 10px 14px; overflow: auto; }
-  blockquote { border-left: 4px solid #d0d7de; margin: 0.8em 0; padding: 0.3em 1em; color: #57606a; background: #f6f8fa; }
-  hr { border: none; border-top: 1px solid #d0d7de; margin: 1.2em 0; }
-</style>
-
 `nginx-acme.sh` **v2.1.0**：自动申请 Let's Encrypt 证书、配置 Nginx HTTPS（反代 / 静态站点 / Cloudflare 已代理反代）、设置自动续期。
 
 **v2.1.0 起，HTTP-01 改用 webroot，申请与续期都不再停止 Nginx。** 旧版 `--standalone` 会占用 80 端口，续期必须停站，这是证书续期失败的根因。
