@@ -107,12 +107,7 @@ bash /opt/scripts/nginx-acme.sh web.myapp.com cf_proxy 127.0.0.1:8080 /root/.sec
 
 当域名使用 **Cloudflare 已代理**（橙色云）时，HTTP 流量经过 Cloudflare 网络，源站 80 端口无需对外暴露。此模式使用 **DNS-01 验证**申请证书，并自动还原客户端真实 IP。
 
-<details>
-<summary><code><strong>飞行模式说明</strong></summary>
-
-此模式用于 Cloudflare 开启橙云代理的域名。你仍然可以通过原本的 80 端口访问本机（如果 80 端口开放），但证书申请会使用 Cloudflare 的 DNS API 完成 challenge，而不是传统的 HTTP-01。其优势是：源站无需暴露 80 端口给 Let's Encrypt，更适合有防火墙或仅暴露 443 端口的场景。
-
-</details>
+此模式适合「源站无需暴露 80 端口」的场景：证书申请通过 Cloudflare DNS API 完成，源站无需暴露 80 端口给 Let's Encrypt，更适合有防火墙或仅暴露 443 端口的机器。
 
 ### 5.1 获得 Cloudflare API Token
 
