@@ -18,8 +18,6 @@
   hr { border: none; border-top: 1px solid #d0d7de; margin: 1.2em 0; }
 </style>
 
-**Nginx + Let's Encrypt 一键部署脚本使用指南**
-
 `nginx-acme.sh` **v2.1.0**：自动申请 Let's Encrypt 证书、配置 Nginx HTTPS（反代 / 静态站点 / Cloudflare 已代理反代）、设置自动续期。
 
 **v2.1.0 起，HTTP-01 改用 webroot，申请与续期都不再停止 Nginx。** 旧版 `--standalone` 会占用 80 端口，续期必须停站，这是证书续期失败的根因。
